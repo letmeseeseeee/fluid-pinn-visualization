@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# env / IDE
+.venv/
+venv/
+.idea/
+.vscode/
+
+# outputs
+output/
+web_exports/
+
+# model / data / media
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.mat
+*.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# secrets
+.env
+*.pem
+*.key
