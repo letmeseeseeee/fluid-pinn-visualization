@@ -1,0 +1,13 @@
+# Core training / script dependencies
+numpy
+torch
+matplotlib
+scikit-learn
+scipy
+opencv-python
+tqdm
+sympy
+
+# API backend
+fastapi
+uvicorn
