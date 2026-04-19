@@ -20,6 +20,8 @@ import random
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm, trange
 
+from web_export import ExportPayload, export_prediction_bundle
+
 # 在v0.2中(即当前版本）应当完成数值方法使用固定神经网络CNN替代的工作，
 # 而后在v0.2版本的基础上应该添加神经网络模块
 
@@ -1508,6 +1510,42 @@ class TimeSeriesMatrixDataset(Dataset):
         return input_matrix, target_matrix
 
 
+def rollout_data_driven(net, steps):
+    """Rollout net.data_driven_forward for a fixed number of steps, returning [T,H,W]."""
+    u0 = net.get_u0()
+    u = torch.tensor(u0[None, None, None, ...], dtype=torch.float32).cuda()
+    result = [u0.copy()]
+    for _ in range(steps):
+        u = net.data_driven_forward(u[:, -1:, ...])
+        result.append(u[0, -1, 0, ...].clone().detach().cpu().numpy())
+    return np.array(result)
+
+
+def export_web_bundle(net, epoch, short_prediction, short_gt):
+    long_steps = int(getattr(net, "long_step", max(len(short_gt) - 1, 0)))
+    long_prediction = rollout_data_driven(net, long_steps)
+    long_gt = net.getgtsympy(long_steps + 1, delt=net.dt * interval)
+
+    payload = ExportPayload(
+        prediction_short=short_prediction,
+        gt_short=short_gt,
+        prediction_long=long_prediction,
+        gt_long=long_gt,
+        model_name="pinn",
+        epoch=int(epoch),
+        dt=float(net.dt * interval),
+        dx=float(net.dx),
+        dy=float(net.dy),
+        extra_meta={
+            "interval": int(interval),
+            "nu": float(net.nu),
+            "source": "Hea0.1.19.py/test",
+        },
+    )
+    out_dir = export_prediction_bundle('.', payload)
+    print(f"[web export] exported to: {out_dir}")
+
+
 def test(net, fin=False, epo=0):
     global mse0
     # test phase
@@ -1525,6 +1563,7 @@ def test(net, fin=False, epo=0):
     result = np.array(result)
     # print(result.shape)
     np.save('data/output/result/result_' + str(epo) + '.npy', result)
+    export_web_bundle(net=net, epoch=epo, short_prediction=result, short_gt=test_gt)
     RMSE = []
     for i in trange(test_len):
         rmse = np.sqrt(mean_squared_error(test_gt[i, ...].flatten(), result[i, ...].flatten()))
