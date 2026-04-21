@@ -77,3 +77,14 @@ npm run dev
 - 计算任务放到云端（GPU/CPU服务）；
 - 当前本地后端接口以后可逐步替换成云端API；
 - 导出格式仍保持 `web_exports` 的统一结构，便于本地/云端对齐。
+
+
+### 常见问题：PyCharm 提示 invalid Python SDK
+
+如果双击/运行 `start_all.bat` 出现类似 *invalid Python SDK*，通常是 PyCharm 解释器配置问题。
+脚本现在会自动尝试 `python`、`py -3`、`.venv\Scripts\python.exe`。
+
+建议：
+1. 先在 PyCharm 中设置有效解释器（Python 3.10+）；
+2. 或在项目根目录创建 `.venv`；
+3. 再双击 `start_all.bat`。

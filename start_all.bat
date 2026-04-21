@@ -14,13 +14,27 @@ cd /d "%ROOT_DIR%"
 set BACKEND_PORT=8000
 set FRONTEND_URL=http://127.0.0.1:5173
 
-where python >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Python not found in PATH.
-  echo Please install Python and add it to PATH.
+REM Resolve Python command robustly (PyCharm may show invalid SDK)
+set PY_CMD=
+where python >nul 2>nul && set PY_CMD=python
+if "%PY_CMD%"=="" (
+  where py >nul 2>nul && set PY_CMD=py -3
+)
+if "%PY_CMD%"=="" (
+  if exist "%ROOT_DIR%.venv\Scripts\python.exe" set PY_CMD="%ROOT_DIR%.venv\Scripts\python.exe"
+)
+if "%PY_CMD%"=="" (
+  if exist "%ROOT_DIR%venv\Scripts\python.exe" set PY_CMD="%ROOT_DIR%venv\Scripts\python.exe"
+)
+
+if "%PY_CMD%"=="" (
+  echo [ERROR] Python not found. Please install Python 3.10+ or create .venv in project root.
+  echo [TIP] In PyCharm: Settings -^> Project -^> Python Interpreter, select a valid interpreter first.
   pause
   exit /b 1
 )
+
+echo Using Python command: %PY_CMD%
 
 where npm >nul 2>nul
 if errorlevel 1 (
@@ -31,7 +45,7 @@ if errorlevel 1 (
 )
 
 echo [1/4] Preparing backend dependencies...
-python -m pip install -r backend\requirements.txt
+call %PY_CMD% -m pip install -r backend\requirements.txt
 if errorlevel 1 (
   echo [ERROR] Failed to install backend requirements.
   pause
@@ -53,7 +67,7 @@ if not exist "frontend\node_modules" (
 )
 
 echo [3/4] Starting backend on port %BACKEND_PORT%...
-start "heat-backend" cmd /k "cd /d "%ROOT_DIR%" && python -m uvicorn backend.app:app --reload --port %BACKEND_PORT%"
+start "heat-backend" cmd /k "cd /d "%ROOT_DIR%" && call %PY_CMD% -m uvicorn backend.app:app --reload --port %BACKEND_PORT%"
 
 echo [4/4] Starting frontend dev server...
 start "heat-frontend" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev"
@@ -65,5 +79,5 @@ echo Opening browser: %FRONTEND_URL%
 start "" "%FRONTEND_URL%"
 
 echo Done. Keep the two terminal windows running while previewing.
-echo To stop: close the backend and frontend terminal windows.
+echo To stop: close the backend and frontend terminal windows or run stop_all.bat.
 endlocal
