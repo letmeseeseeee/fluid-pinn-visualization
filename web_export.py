@@ -19,6 +19,7 @@ class ExportPayload:
     dt: float
     dx: float
     dy: float
+    run_name: Optional[str] = None
     extra_meta: Optional[Dict[str, Any]] = None
 
 
@@ -36,11 +37,22 @@ def _series_metrics(pred: np.ndarray, gt: np.ndarray) -> Dict[str, Any]:
     diff = pred - gt
     per_t_mse = np.mean(diff ** 2, axis=(1, 2))
     per_t_rmse = np.sqrt(per_t_mse)
+
+    gt_l2 = np.sqrt(np.sum(gt ** 2, axis=(1, 2)))
+    diff_l2 = np.sqrt(np.sum(diff ** 2, axis=(1, 2)))
+    per_t_rel_l2 = np.where(gt_l2 > 0, diff_l2 / gt_l2, 0.0)
+
+    gt_l2_global = float(np.sqrt(np.sum(gt ** 2)))
+    diff_l2_global = float(np.sqrt(np.sum(diff ** 2)))
+    rel_l2_global = diff_l2_global / gt_l2_global if gt_l2_global > 0 else 0.0
+
     return {
         "mse": float(np.mean(diff ** 2)),
         "rmse": float(np.sqrt(np.mean(diff ** 2))),
+        "rel_l2": rel_l2_global,
         "frame_mse": per_t_mse.tolist(),
         "frame_rmse": per_t_rmse.tolist(),
+        "frame_rel_l2": per_t_rel_l2.tolist(),
     }
 
 
@@ -59,7 +71,8 @@ def export_prediction_bundle(root_dir: str | Path, payload: ExportPayload) -> Pa
       metrics.json
     """
     root = Path(root_dir)
-    out_dir = root / "web_exports" / payload.model_name.lower() / f"epoch_{payload.epoch:06d}"
+    run_name = payload.run_name or f"epoch_{payload.epoch:06d}"
+    out_dir = root / "web_exports" / payload.model_name.lower() / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     pred_short = _to_3d(payload.prediction_short)

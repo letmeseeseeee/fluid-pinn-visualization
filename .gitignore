@@ -5,8 +5,11 @@ __pycache__/
 # env / IDE
 .venv/
 venv/
+.venv-cuda/
 .idea/
 .vscode/
+.claude/
+.pytest_cache/
 
 # outputs
 output/
@@ -24,6 +27,24 @@ web_exports/
 *.jpg
 *.jpeg
 *.gif
+*.zip
+
+# frontend build / deps
+frontend/node_modules/
+frontend/dist/
+
+# temp / local packaging
+tmp/
+tmp_*/
+tmp_*
+project_package/
+submission_package/
+docs/figures/
+docs/*.zip
+docs/*.pdf
+__pycache__/
+backend/__pycache__/
+Scripts/__pycache__/
 
 # secrets
 .env

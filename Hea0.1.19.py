@@ -1,3 +1,6 @@
+import argparse
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -29,6 +32,48 @@ from web_export import ExportPayload, export_prediction_bundle
 interval = 1
 
 mse0 = 0.0
+seed = 0
+RUNTIME_CONFIG = {}
+
+
+def set_runtime_config(config=None):
+    global RUNTIME_CONFIG, interval
+    RUNTIME_CONFIG = dict(config or {})
+    interval = int(RUNTIME_CONFIG.get("interval", 1))
+
+
+def get_runtime_value(name, default=None):
+    return RUNTIME_CONFIG.get(name, default)
+
+
+def get_runtime_bool(name, default=False):
+    value = RUNTIME_CONFIG.get(name, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def current_runtime_config():
+    return {
+        "equation": str(get_runtime_value("equation", "heat")),
+        "nx": int(get_runtime_value("nx", 101)),
+        "ny": int(get_runtime_value("ny", 101)),
+        "nu": float(get_runtime_value("nu", 1.0)),
+        "dt": float(get_runtime_value("dt", 1e-5)),
+        "short_steps": int(get_runtime_value("short_steps", 100)),
+        "long_steps": int(get_runtime_value("long_steps", 100)),
+        "epochs": int(get_runtime_value("epochs", 108000)),
+        "learning_rate": float(get_runtime_value("learning_rate", 1e-5)),
+        "seed": int(get_runtime_value("seed", 50976)),
+        "network_type": str(get_runtime_value("network_type", "transformer")),
+        "transformer_hidden_channels": int(get_runtime_value("transformer_hidden_channels", 128)),
+        "patch_size": int(get_runtime_value("patch_size", 16)),
+        "num_heads": int(get_runtime_value("num_heads", 4)),
+        "num_layers": int(get_runtime_value("num_layers", 4)),
+        "loss_phy_weight": float(get_runtime_value("loss_phy_weight", 1.0)),
+        "loss_data_weight": float(get_runtime_value("loss_data_weight", 0.0)),
+        "run_name": get_runtime_value("run_name", None),
+    }
 
 
 def set_random_seed(mySeed=0):
@@ -198,9 +243,11 @@ class PRNet(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.nx = 101  # grid points in x-Direction
-        self.ny = 101  # grid points in y-Direction
-        self.nu = 1.  # viscosity
+        self.nx = int(get_runtime_value("nx", 101))  # grid points in x-Direction
+        self.ny = int(get_runtime_value("ny", 101))  # grid points in y-Direction
+        if self.nx != self.ny:
+            raise ValueError("PRNet currently supports square grids only, require nx == ny.")
+        self.nu = float(get_runtime_value("nu", 1.0))  # viscosity
 
         # self.dx = self.dy = 0.02
         self.dx = 1. / self.nx
@@ -214,16 +261,16 @@ class PRNet(nn.Module):
         # self.nt = 1000
         # self.dt = 0.2
         # self.dt = 0.00001
-        self.dt = 1e-5
+        self.dt = float(get_runtime_value("dt", 1e-5))
 
         print('dt:', self.dt)
 
-        self.step = 50
-        self.long_step = 100
-        self.save_step = 100
-        self.print_step = 10
+        self.step = int(get_runtime_value("model_steps", 50))
+        self.long_step = int(get_runtime_value("long_steps", 100))
+        self.save_step = int(get_runtime_value("save_step", 100))
+        self.print_step = int(get_runtime_value("print_step", 10))
 
-        self.batch_size = 1
+        self.batch_size = int(get_runtime_value("batch_size", 1))
         self.in_channels = 1
         self.hidden_channels = 20
         # self.height = 50
@@ -232,10 +279,10 @@ class PRNet(nn.Module):
         self.kernel_size = 3
         self.stride = 1
 
-        self.hw = 101
+        self.hw = self.nx
 
         # self.cycle = 10
-        self.cycle = 50
+        self.cycle = int(get_runtime_value("cycle", 50))
         self.single_step = self.step // self.cycle
         self.all_fusion = False
 
@@ -252,7 +299,8 @@ class PRNet(nn.Module):
         # self.u0 = np.zeros((self.ny, self.nx))
         # self.u0[int(0.8 / self.dy):int(1.2 / self.dy + 1) - 1, int(0.8 / self.dx):int(1.2 / self.dx + 1) - 1] = 1
 
-        gt = self.getgtsympy(700)
+        gt_steps = max(int(get_runtime_value("gt_steps", 700)), self.long_step + 1)
+        gt = self.getgtsympy(gt_steps, delt=self.dt)
         # gt = self.getgtsympy(10000)
         # for i in range(500):
         #     plt.clf()
@@ -297,7 +345,7 @@ class PRNet(nn.Module):
         x, y, t = sp.symbols('x y t')
 
         # 定义解析解函数
-        u_exact = sp.exp(-2 * sp.pi ** 2 * t) * sp.sin(sp.pi * x) * sp.sin(sp.pi * y)
+        u_exact = sp.exp(-2 * self.nu * sp.pi ** 2 * t) * sp.sin(sp.pi * x) * sp.sin(sp.pi * y)
         # print("解析解表达式:")
         # display(u_exact)  # 以 LaTeX 格式显示公式
 
@@ -322,7 +370,7 @@ class PRNet(nn.Module):
         x, y, t = sp.symbols('x y t')
 
         # 定义解析解函数
-        u_exact = sp.exp(-2 * sp.pi ** 2 * t) * sp.sin(sp.pi * x) * sp.sin(sp.pi * y)
+        u_exact = sp.exp(-2 * self.nu * sp.pi ** 2 * t) * sp.sin(sp.pi * x) * sp.sin(sp.pi * y)
         print("解析解表达式:")
         # display(u_exact)  # 以 LaTeX 格式显示公式
 
@@ -375,8 +423,28 @@ class PRNet(nn.Module):
         # self.model = NetResTransformer(in_channels=1, hidden_channels=64, out_channels=1, patch_size=16, num_heads=4,
         #                                num_layers=4, kernel_size=3, stride=1, padding=1).cuda()
 
-        self.model = NetResTransformer(in_channels=1, hidden_channels=128, out_channels=1, patch_size=16, num_heads=4,
-                                       num_layers=4, kernel_size=3, stride=1, padding=1).cuda()
+        network_type = str(get_runtime_value("network_type", "transformer")).lower()
+        if network_type == "cnn":
+            self.model = NetRes(
+                self.in_channels,
+                int(get_runtime_value("cnn_hidden_channels", self.hidden_channels)),
+                self.out_channels,
+                self.kernel_size,
+                self.stride,
+                self.padding,
+            ).cuda()
+        else:
+            self.model = NetResTransformer(
+                in_channels=1,
+                hidden_channels=int(get_runtime_value("transformer_hidden_channels", 128)),
+                out_channels=1,
+                patch_size=int(get_runtime_value("patch_size", 16)),
+                num_heads=int(get_runtime_value("num_heads", 4)),
+                num_layers=int(get_runtime_value("num_layers", 4)),
+                kernel_size=3,
+                stride=1,
+                padding=1,
+            ).cuda()
 
         # self.model = NetRes(self.in_channels, self.hidden_channels, self.out_channels, self.kernel_size, self.stride, self.padding).cuda()
 
@@ -1536,10 +1604,12 @@ def export_web_bundle(net, epoch, short_prediction, short_gt):
         dt=float(net.dt * interval),
         dx=float(net.dx),
         dy=float(net.dy),
+        run_name=get_runtime_value("run_name", None),
         extra_meta={
             "interval": int(interval),
             "nu": float(net.nu),
-            "source": "Hea0.1.19.py/test",
+            "source": "pinn_runtime_export",
+            "runtime_config": current_runtime_config(),
         },
     )
     out_dir = export_prediction_bundle('.', payload)
@@ -1549,8 +1619,8 @@ def export_web_bundle(net, epoch, short_prediction, short_gt):
 def test(net, fin=False, epo=0):
     global mse0
     # test phase
-    test_len = 100 // interval
-    test_gt = net.getgtsympy(test_len + 1, delt=1e-5 * interval)
+    test_len = int(get_runtime_value("short_steps", 100))
+    test_gt = net.getgtsympy(test_len + 1, delt=net.dt * interval)
     u = test_gt[None, 0:1, None, ...]
     # print('uuu: ', u.shape)
     result = []
@@ -1561,7 +1631,14 @@ def test(net, fin=False, epo=0):
         # print('u2: ', u.shape)
         result.append(u[0, -1, ...].clone().detach().cpu().numpy())
     result = np.array(result)
-    # print(result.shape)
+
+    if np.any(~np.isfinite(result)):
+        nan_frames = [i for i in range(result.shape[0]) if not np.all(np.isfinite(result[i]))]
+        raise RuntimeError(
+            f"Rollout produced non-finite values (NaN/Inf) at frames {nan_frames}. "
+            f"Try reducing dt (current: {net.dt * interval:.1e}) or using fewer steps."
+        )
+
     np.save('data/output/result/result_' + str(epo) + '.npy', result)
     export_web_bundle(net=net, epoch=epo, short_prediction=result, short_gt=test_gt)
     RMSE = []
@@ -1589,114 +1666,110 @@ def test(net, fin=False, epo=0):
     plt.close()
 
 
-if __name__ == '__main__':
-    # prnet = PRNet()
-    # u0 = prnet.get_u0()
-    # result = prnet.PR_forward(u0)
-    # prnet.comp_with_gt(result)
-    # prnet.print_diff_absolute(result)
-    # prnet.print_diff_relative(result)
+def delete_folder_contents(folder_path):
+    if not os.path.exists(folder_path):
+        return
+    if not os.path.isdir(folder_path):
+        return
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print(f"删除 '{file_path}' 时出错: {e}")
 
-    seed = np.random.randint(1, 100000)
-    seed = 50976
-    set_random_seed(mySeed=seed)  # mySeed = 4,95.5左右
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(description="Parameterized runtime entry for the original PINN heat solver.")
+    parser.add_argument("--equation", default="heat")
+    parser.add_argument("--nx", type=int, default=101)
+    parser.add_argument("--ny", type=int, default=101)
+    parser.add_argument("--nu", type=float, default=1.0)
+    parser.add_argument("--dt", type=float, default=1e-5)
+    parser.add_argument("--short-steps", dest="short_steps", type=int, default=100)
+    parser.add_argument("--long-steps", dest="long_steps", type=int, default=100)
+    parser.add_argument("--model-steps", dest="model_steps", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=108000)
+    parser.add_argument("--learning-rate", dest="learning_rate", type=float, default=1e-5)
+    parser.add_argument("--seed", type=int, default=50976)
+    parser.add_argument("--interval", type=int, default=1)
+    parser.add_argument("--transformer-hidden-channels", dest="transformer_hidden_channels", type=int, default=128)
+    parser.add_argument("--patch-size", dest="patch_size", type=int, default=16)
+    parser.add_argument("--num-heads", dest="num_heads", type=int, default=4)
+    parser.add_argument("--num-layers", dest="num_layers", type=int, default=4)
+    parser.add_argument("--network-type", dest="network_type", choices=["transformer", "cnn"], default="transformer")
+    parser.add_argument("--loss-phy-weight", dest="loss_phy_weight", type=float, default=1.0)
+    parser.add_argument("--loss-data-weight", dest="loss_data_weight", type=float, default=0.0)
+    parser.add_argument("--train-series-steps", dest="train_series_steps", type=int, default=20)
+    parser.add_argument("--export-interval", dest="export_interval", type=int, default=0)
+    parser.add_argument("--run-name", dest="run_name", default=None)
+    parser.add_argument("--keep-temp-output", dest="keep_temp_output", action="store_true")
+    parser.add_argument("--run-initial-test", dest="run_initial_test", action="store_true")
+    return parser
+
+
+def run_training():
+    global seed
+
+    if str(get_runtime_value("equation", "heat")).lower() != "heat":
+        raise ValueError("This runtime entry currently supports the heat equation only.")
+
+    seed = int(get_runtime_value("seed", 50976))
+    set_random_seed(mySeed=seed)
     print('using seed:', seed)
 
-
-    def delete_folder_contents(folder_path):
-        # 确保文件夹路径存在
-        if not os.path.exists(folder_path):
-            print(f"文件夹 '{folder_path}' 不存在。")
-            return
-
-        # 确保路径是一个文件夹
-        if not os.path.isdir(folder_path):
-            print(f"'{folder_path}' 不是一个有效的文件夹路径。")
-            return
-
-        # 递归删除文件夹内容
-        for filename in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, filename)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
-            except Exception as e:
-                print(f"删除 '{file_path}' 时出错: {e}")
-
-        print(f"文件夹 '{folder_path}' 中的所有文件和文件夹已删除。")
-
-
     delete_folder = './data/output/result/'
-    # 使用示例
-    delete_folder_contents(delete_folder)
-    prnet = PRNet().cuda()
-    # prnet.train_nn()
+    os.makedirs(delete_folder, exist_ok=True)
+    os.makedirs('./output/result', exist_ok=True)
+    if not get_runtime_bool("keep_temp_output", False):
+        delete_folder_contents(delete_folder)
 
-    tensor = torch.randn(64, 1, 1, 101, 101).to(torch.float32).cuda()
+    prnet = PRNet().cuda()
+
+    tensor = torch.randn(64, 1, 1, prnet.hw, prnet.hw).to(torch.float32).cuda()
     output = prnet.data_driven_forward(tensor)
     print(output.shape)
 
-    u = torch.tensor(prnet.get_u0()[None, None], dtype=torch.float32).cuda()
-    # print(u.shape)
-    # result = []
-    # for i in range(1000):
-    #     u = prnet.data_driven_forward(u)
-    #     result.append(u.clone().detach().cpu().numpy())
-    # result = np.array(result)
-    # print(result.shape)
-    #
-    # for j in range(1000):
-    #     plt.clf()
-    #     plt.imshow(result[j][0, 0, ...], cmap='hot', origin='lower')
-    #     plt.colorbar()
-    #     plt.pause(0.002)
-    #     plt.ioff()
-
-    gt = prnet.getgtsympy(20 // interval, 1e-5 * interval)
+    train_series_steps = int(get_runtime_value("train_series_steps", 20))
+    gt = prnet.getgtsympy(train_series_steps // interval, prnet.dt * interval)
     print('gt: ', gt.shape)
 
-    # 创建数据集
     dataset = TimeSeriesMatrixDataset(gt)
-
-    # 创建 DataLoader，设置批次大小为64
     dataloader = DataLoader(
         dataset,
-        batch_size=16 // interval,  # 每次加载64个样本
-        shuffle=True,  # 是否打乱数据
-        num_workers=0,  # 多进程加载（可选）
-        drop_last=True  # 丢弃最后不足一个批次的数据
+        batch_size=max(1, 16 // interval),
+        shuffle=True,
+        num_workers=0,
+        drop_last=True
     )
     loss_fn = prnet.loss_fn
-    optimizer = torch.optim.Adam(prnet.parameters(), lr=1e-5)
-    with torch.no_grad():
-        test(prnet)
+    optimizer = torch.optim.Adam(prnet.parameters(), lr=float(get_runtime_value("learning_rate", 1e-5)))
+    if get_runtime_bool("run_initial_test", False):
+        with torch.no_grad():
+            test(prnet, epo=0)
 
-    epo = 1000100
-    for epoch in range(epo):
+    max_epoch = int(get_runtime_value("epochs", 108000))
+    export_interval = int(get_runtime_value("export_interval", 0))
+    loss_phy_weight = float(get_runtime_value("loss_phy_weight", 1.0))
+    loss_data_weight = float(get_runtime_value("loss_data_weight", 0.0))
+
+    for epoch in range(max_epoch + 1):
         total_loss = 0.
         tp_loss = 0.
         td_loss = 0.
         for batch_idx, (batch_input, batch_target) in enumerate(dataloader):
-            batch_input, batch_target = batch_input[:, None, ...].to(torch.float32).cuda(), batch_target[:, None,
-                                                                                            ...].to(
-                torch.float32).cuda()
-            # print('batch_input: ', batch_input.shape)
-            # print('batch_target: ', batch_target.shape)
+            batch_input = batch_input[:, None, ...].to(torch.float32).cuda()
+            batch_target = batch_target[:, None, ...].to(torch.float32).cuda()
             optimizer.zero_grad()
             pred = prnet.data_driven_forward(batch_input)
-            # print('pred: ', pred.shape)
 
             phy_loss = prnet.get_phy_loss_data(pred)
             phy_loss = loss_fn(phy_loss, torch.zeros_like(phy_loss))
             data_loss = loss_fn(pred[:, -1:, ...], batch_target)
-            # print('phy_loss: ', phy_loss.shape)
-            # print('data_loss: ', data_loss.shape)
-            # print(data_loss)
-
-            #loss = 1e3 * phy_loss + 1e9 * data_loss
-            loss = 1.0 * phy_loss + 0.0 * data_loss
+            loss = loss_phy_weight * phy_loss + loss_data_weight * data_loss
 
             loss.backward()
             optimizer.step()
@@ -1709,48 +1782,50 @@ if __name__ == '__main__':
             f"\r seed: {seed} interval: {interval} It: {epoch} Loss: {total_loss:.5e} phy_loss: {tp_loss:.5e} data_loss: {td_loss:.5e} ",
             end="",
         )
-        if epoch % (epo // 100) == 0:
+
+        if max_epoch > 0 and epoch % max(1, max_epoch // 100) == 0:
             print()
-        if epoch % 1000 == 0:
+
+        if export_interval > 0 and epoch > 0 and epoch % export_interval == 0:
             with torch.no_grad():
                 test(prnet, fin=True, epo=epoch)
-    '''
-    epo = 1000100
-    for epoch in range(epo):
-        total_loss = 0.
-        tp_loss = 0.
-        td_loss = 0.
-        for batch_idx, (batch_input, batch_target) in enumerate(dataloader):
-            batch_input, batch_target = batch_input[:, None, ...].to(torch.float32).cuda(), batch_target[:, None, ...].to(torch.float32).cuda()
-            # print('batch_input: ', batch_input.shape)
-            # print('batch_target: ', batch_target.shape)
-            optimizer.zero_grad()
-            pred = prnet.data_driven_forward(batch_input)
-            # print('pred: ', pred.shape)
 
-            phy_loss = prnet.get_phy_loss_data(pred)
-            phy_loss = loss_fn(phy_loss, torch.zeros_like(phy_loss))
-            data_loss = loss_fn(pred[:, -1:, ...], batch_target)
-            # print('phy_loss: ', phy_loss.shape)
-            # print('data_loss: ', data_loss.shape)
-            # print(data_loss)
+    if export_interval <= 0 or max_epoch % export_interval != 0:
+        with torch.no_grad():
+            test(prnet, fin=True, epo=max_epoch)
 
-            loss = 1e3*phy_loss + 1e9*data_loss
 
-            loss.backward()
-            optimizer.step()
+def main(argv=None):
+    args = build_arg_parser().parse_args(argv)
+    runtime_config = {
+        "equation": args.equation,
+        "nx": args.nx,
+        "ny": args.ny,
+        "nu": args.nu,
+        "dt": args.dt,
+        "short_steps": args.short_steps,
+        "long_steps": args.long_steps,
+        "model_steps": args.model_steps,
+        "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "seed": args.seed,
+        "interval": args.interval,
+        "transformer_hidden_channels": args.transformer_hidden_channels,
+        "patch_size": args.patch_size,
+        "num_heads": args.num_heads,
+        "num_layers": args.num_layers,
+        "network_type": args.network_type,
+        "loss_phy_weight": args.loss_phy_weight,
+        "loss_data_weight": args.loss_data_weight,
+        "train_series_steps": args.train_series_steps,
+        "export_interval": args.export_interval,
+        "run_name": args.run_name,
+        "keep_temp_output": args.keep_temp_output,
+        "run_initial_test": args.run_initial_test,
+    }
+    set_runtime_config(runtime_config)
+    run_training()
 
-            total_loss += loss.item()
-            tp_loss += phy_loss.item()
-            td_loss += data_loss.item()
 
-        print(
-                f"\r seed: {seed} interval: {interval} It: {epoch} Loss: {total_loss:.5e} phy_loss: {tp_loss:.5e} data_loss: {td_loss:.5e} ",
-            end="",
-        )
-        if epoch % (epo // 100) == 0:
-            print()
-        if epoch % 1000 == 0:
-            with torch.no_grad():
-                test(prnet, fin=True, epo=epoch)
-    '''
+if __name__ == '__main__':
+    main()

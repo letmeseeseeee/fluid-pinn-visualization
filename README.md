@@ -1,90 +1,102 @@
-# 流体模拟自动化平台（Heat Equation Online Demo）
+# 流体模拟自动化平台
 
-当前版本目标：
-- 只做**热方程**；
-- 第一版只开放 **PINN** 在线任务流程；
-- FNO 先保留对比接口占位，后续再接入。
+本项目围绕二维热方程构建了一套面向毕业设计展示的自动化平台。平台以原始 PINN 热方程求解模块为主求解链路，以 FNO 结果为离线对照链路，统一组织结果导出、接口访问、前端展示和在线求解流程。
 
-## 1) 你现在可以做什么
+## 项目定位
 
-1. 前端输入参数，提交在线仿真任务；
-2. 后端在几秒内生成结果数据并写入统一导出目录；
-3. 前端展示热力图时间步播放 + MSE/RMSE 曲线。
+- **系统主线**：统一结果管理、接口访问、网页展示、参数化回放与在线求解。
+- **学术支撑**：在同一热方程任务下完成 PINN 与 FNO 的结果对比分析。
+- **交互方式**：用户填写参数后，系统匹配预计算结果并播放；无缓存时自动启动后台训练。
 
-## 2) 统一导出格式
+## 核心功能
 
-在线任务成功后会落盘：
+| 功能 | 说明 |
+|------|------|
+| PINN 参数化演示 | 填写 16 个超参数，匹配 4 组预设或 500+ 个历史快照，热力图播放 |
+| PINN / FNO 对比分析 | 独立时间轴下同步展示 PINN、FNO、真值、差异热力图 + RMSE/MSE 曲线 |
+| 在线求解链路 | 参数无缓存时自动后台训练，实时进度反馈，完成后自动加载 |
+| 取消训练 | 训练中可随时取消，进程即时终止 |
+| 页面刷新恢复 | 训练中途刷新页面，自动恢复任务状态和进度 |
 
-- `web_exports/pinn/epoch_xxxxxx/prediction_short.npy`
-- `web_exports/pinn/epoch_xxxxxx/gt_short.npy`
-- `web_exports/pinn/epoch_xxxxxx/diff_short.npy`
-- `web_exports/pinn/epoch_xxxxxx/prediction_long.npy`
-- `web_exports/pinn/epoch_xxxxxx/gt_long.npy`
-- `web_exports/pinn/epoch_xxxxxx/diff_long.npy`
-- `web_exports/pinn/epoch_xxxxxx/meta.json`
-- `web_exports/pinn/epoch_xxxxxx/metrics.json`
+## 技术栈
 
-## 3) 后端启动
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3 + Vite + ECharts |
+| 后端 | FastAPI + Uvicorn |
+| 训练 | PyTorch (PINN) + neuraloperator (FNO) |
+| 数据 | NumPy (.npy) + JSON |
 
-```bash
-pip install -r backend/requirements.txt
-uvicorn backend.app:app --reload --port 8000
+## 项目结构
+
+```text
+graduate_project/
+├── backend/
+│   ├── app.py                    # FastAPI 主应用（11 个接口）
+│   ├── pinn_original_runner.py   # PINN 训练执行器（缓存匹配 + 进程管理）
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── App.vue               # Vue 3 单文件组件（~2100 行）
+│   │   └── main.js
+│   ├── package.json
+│   └── vite.config.js
+├── Hea0.1.19.py                  # 原始 PINN 训练脚本
+├── train_fno_neuralop.py         # FNO 训练脚本
+├── web_export.py                 # 结果导出标准化模块
+├── web_exports/                  # 统一结果存储（pinn/ + fno/）
+├── docs/
+│   ├── project_manual.md         # 项目说明书（8000+ 字）
+│   └── thesis_draft.md           # 论文草稿
+├── start_all.bat                 # 一键启动
+└── stop_all.bat                  # 一键停止
 ```
 
-## 4) 前端启动
+## 结果目录规范
 
-```bash
-cd frontend
-npm install
-npm run dev
+每个结果目录（`web_exports/{model}/{run}/`）统一包含：
+
+- `prediction_short.npy` / `gt_short.npy` / `diff_short.npy` — 短时窗口数据
+- `prediction_long.npy` / `gt_long.npy` / `diff_long.npy` — 长时窗口数据
+- `meta.json` — 元数据（网格、帧数、超参数）
+- `metrics.json` — 误差指标（总 MSE/RMSE + 逐帧序列）
+
+## 一键启动
+
+双击 `start_all.bat`，自动安装依赖并启动后端（8000）和前端（5173）。
+
+## API 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/models` | 列出模型 |
+| GET | `/api/models/{model}/runs` | 列出结果集 |
+| GET | `/api/pinn/presets` | 列出预计算结果组 |
+| GET | `/api/models/{model}/{run}/meta` | 获取元数据 |
+| GET | `/api/models/{model}/{run}/metrics` | 获取误差指标 |
+| GET | `/api/models/{model}/{run}/field` | 获取单帧热力图 |
+| GET | `/api/compare/{epoch}` | PINN/FNO 对比数据 |
+| POST | `/api/pinn/solve` | 提交在线求解 |
+| GET | `/api/pinn/jobs/{job_id}` | 查询任务状态与进度 |
+| DELETE | `/api/pinn/jobs/{job_id}` | 取消训练任务 |
+
+## 在线求解链路
+
+```
+用户修改参数 → 点击"提交在线求解"
+  → POST /api/pinn/solve
+    → find_cached_pinn_run() 扫描全部历史结果
+    → 命中？直接返回
+    → 未命中？spawn 后台线程 → subprocess: python Hea0.1.19.py
+      → 训练循环 → export_web_bundle() → web_exports/
+  → 前端每 3 秒轮询进度
+  → 完成 → 自动加载结果至演示面板
 ```
 
-## 5) 参数范围说明（第一版）
+## 论文信息
 
-后端对参数进行约束：
-- `nx, ny: [21, 201]`
-- `nu: [0.01, 2.0]`
-- `dt: (0, 1e-3]`
-- `short_steps: [10, 300]`
-- `long_steps: [20, 600]`
-
-并加入二维显式离散稳定性条件检查（避免发散和超时）。
-
-## 6) FNO 后续接入说明
-
-当前已保留 `/api/compare` 占位。后续你下载并接入 FNO 后，把结果按同一导出格式写入：
-- `web_exports/fno/epoch_xxxxxx/...`
-即可与 PINN 自动对比展示。
-
-## 7) Windows 一键启动（推荐你答辩演示时使用）
-
-在项目根目录双击：
-- `start_all.bat`（启动）
-- `stop_all.bat`（停止）
-
-它会自动：
-1. 安装/检查后端依赖
-2. 安装前端依赖（首次）
-3. 启动后端（8000）
-4. 启动前端并自动打开浏览器（5173）
-
-> 以后项目代码怎么改，前后端入口不变的话，都可以继续用这两个脚本快速启动/停止。
-
-## 8) 云计算服务思路（可行）
-
-这个思路完全可行：
-- 前端保留本地交互和展示；
-- 计算任务放到云端（GPU/CPU服务）；
-- 当前本地后端接口以后可逐步替换成云端API；
-- 导出格式仍保持 `web_exports` 的统一结构，便于本地/云端对齐。
-
-
-### 常见问题：PyCharm 提示 invalid Python SDK
-
-如果双击/运行 `start_all.bat` 出现类似 *invalid Python SDK*，通常是 PyCharm 解释器配置问题。
-脚本现在会自动尝试 `python`、`py -3`、`.venv\Scripts\python.exe`。
-
-建议：
-1. 先在 PyCharm 中设置有效解释器（Python 3.10+）；
-2. 或在项目根目录创建 `.venv`；
-3. 再双击 `start_all.bat`。
+- 论文题目：流体模拟自动化平台
+- 真实验证对象：二维热方程
+- 学术性来源：PINN 与 FNO 的统一任务对比分析
+- 系统设计亮点：非侵入式接入、统一结果标准、参数化回放、在线求解闭环
